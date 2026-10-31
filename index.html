@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Numen Gym has moved</title>
+<link rel="icon" href="https://numengym.github.io/assets/numen-gym-favicon.png">
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(circle at 50% 30%, #13245e, #050a1f 70%); color: #dfe6f5; font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 460px; padding: 32px 16px; text-align: center; }
+  img { width: 160px; height: 160px; border-radius: 18px; box-shadow: 0 0 40px #2f5bd855; }
+  h1 { font-size: 24px; margin: 18px 0 6px; color: #f0c45a; }
+  a { color: #8fb4ff; }
+  button { margin-top: 10px; background: linear-gradient(#f3cf6e, #b8861f); color: #1a1205; border: 0; border-radius: 8px; padding: 11px 18px; font: 600 15px system-ui, sans-serif; cursor: pointer; }
+  .small { font-size: 13px; color: #9aa6c4; }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <img src="https://numengym.github.io/assets/numen-gym-logo.png" alt="Numen Gym">
+  <h1>Numen Gym has moved</h1>
+  <p>It now lives at <a id="go" href="https://numengym.github.io/">numengym.github.io</a>.</p>
+  <div id="carry" hidden>
+    <p>Your browser kept your Numen Gym data at this old address: <span id="what"></span>. Bring it along?</p>
+    <button id="bring" type="button">Move my data and open the new address</button>
+    <p class="small"><a id="skip" href="https://numengym.github.io/">Go without it</a></p>
+  </div>
+  <p id="status" class="small"></p>
+</main>
+<script>
+// The old address of Numen Gym. A browser keeps what a site saves under the site's address, so this page hands the
+// saved data (the "furytrainer." settings, keybinds, macros and loadouts, and Numen Logs' report history) to the new
+// address: it opens it with ?moved in a new tab, waits for it to ask, and posts the data to it alone
+// (numengym.github.io, js/moved-import.js there). With nothing saved here, or once moved, it simply goes on.
+const NEW = 'https://numengym.github.io';
+const target = NEW + location.pathname.replace(/^\/numen-gym(\/|$)/, '/') + location.search + location.hash;
+document.getElementById('go').href = target;
+document.getElementById('skip').href = target;
+
+function localData() {
+  const out = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('furytrainer.')) out[k] = localStorage.getItem(k);
+  }
+  return out;
+}
+
+async function reportData() {
+  try {
+    if (indexedDB.databases && !(await indexedDB.databases()).some((d) => d.name === 'numen-logs')) return { summaries: [], reports: [] };
+    const db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open('numen-logs');
+      req.onupgradeneeded = () => req.transaction.abort(); // nothing was ever saved here
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const all = (store) => new Promise((resolve, reject) => {
+      const req = db.transaction(store).objectStore(store).getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return { summaries: await all('summaries'), reports: await all('reports') };
+  } catch {
+    return { summaries: [], reports: [] };
+  }
+}
+
+(async () => {
+  let moved = false;
+  try { moved = !!localStorage.getItem('numen.moved'); } catch { /* storage blocked */ }
+  const local = moved ? {} : localData();
+  const logs = moved ? { summaries: [], reports: [] } : await reportData();
+  if (!Object.keys(local).length && !logs.reports.length) { location.replace(target); return; }
+
+  const parts = [];
+  if (Object.keys(local).length) parts.push('settings, keybinds, macros and characters');
+  if (logs.reports.length) parts.push(`${logs.reports.length} fight report${logs.reports.length > 1 ? 's' : ''}`);
+  document.getElementById('what').textContent = parts.join(' and ');
+  document.getElementById('carry').hidden = false;
+  const status = document.getElementById('status');
+
+  document.getElementById('bring').addEventListener('click', () => {
+    const url = new URL(target);
+    url.searchParams.set('moved', '');
+    const win = window.open(url.href, '_blank');
+    if (!win) { status.textContent = 'Your browser blocked the new tab. Allow pop-ups for this page and try again.'; return; }
+    status.textContent = 'Moving your data…';
+    window.addEventListener('message', (e) => {
+      if (e.origin !== NEW || e.source !== win || !e.data) return;
+      if (e.data.type === 'numen-move-ready') win.postMessage({ type: 'numen-move', local, summaries: logs.summaries, reports: logs.reports }, NEW);
+      if (e.data.type === 'numen-move-done') {
+        try { localStorage.setItem('numen.moved', String(Date.now())); } catch { /* storage blocked */ }
+        status.textContent = 'Done: your data is at the new address, open in the other tab. You can close this one.';
+        document.getElementById('bring').hidden = true;
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>
